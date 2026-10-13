@@ -647,6 +647,54 @@
     document.getElementById('zapis').setAttribute('data-v-span', '1.3');
   }
   Vibe.mount(document.querySelector('.v-page'));
+
+  // Без анимаций (в Windows выключены «Эффекты анимации» → prefers-reduced-motion): движок vibe.js показывает
+  // все реплики сразу, и реплики, стоящие в одном месте, ложатся друг на друга. Здесь они сменяются мгновенно,
+  // по тем же порогам прокрутки, что и с анимацией. Реплики одного родителя с разными окнами – группа: видны
+  // только самые проявленные (несколько, если проявлены одинаково, например оффер и стикеры с общим окном).
+  (function () {
+    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    function num(s, d) { var n = parseFloat(s); return isNaN(n) ? d : n; }
+    var items = [];
+    document.querySelectorAll('[data-v-act]').forEach(function (act) {
+      act.querySelectorAll('[data-v-cue]').forEach(function (el) {
+        if (el.closest('[data-v-act]') !== act) return;
+        var a = (el.getAttribute('data-v-cue') || '').trim().split(/\s+/);
+        var from = num(a[0], 0), to = num(a[1], 1), win = Math.max(Math.min(to, 1) - from, 0.0001);
+        var ri = a.length > 2 ? num(a[2], 0.3 * win) : 0.3 * win;
+        var ro = a.length > 3 ? num(a[3], 0.3 * win) : 0.3 * win;
+        items.push({ act: act, el: el, from: from, to: to, ri: ri, ro: ro, hold: a.length < 2, on: null });
+      });
+    });
+    // прозрачность реплики так же, как её считает движок (0..1)
+    function opa(c, p) {
+      var q = c.ri <= 0 ? (p >= c.from ? 1 : 0) : Math.min(Math.max((p - c.from) / c.ri, 0), 1);
+      if (c.hold) return q;
+      var out = c.ro <= 0 ? ((p >= c.to && c.to < 1) ? 0 : 1) : 1 - Math.min(Math.max((p - (c.to - c.ro)) / c.ro, 0), 1);
+      return Math.min(q, out);
+    }
+    var groups = new Map();
+    items.forEach(function (c) { var k = c.el.parentNode; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(c); });
+    groups.forEach(function (g) {
+      var seq = g.length > 1 && g.some(function (c) { return c.from !== g[0].from || c.to !== g[0].to; });
+      g.forEach(function (c) { c.group = seq ? g : null; });
+    });
+    // движок ведёт --v-p сам (с догонялкой), поэтому сверяемся с ним каждый кадр
+    function loop() {
+      items.forEach(function (c) { c.o = opa(c, num(c.act.style.getPropertyValue('--v-p'), 0)); });
+      items.forEach(function (c) {
+        var on;
+        if (c.group) {
+          var max = 0;
+          c.group.forEach(function (d) { if (d.o > max) max = d.o; });
+          on = max > 0.02 && c.o >= max - 0.01;
+        } else on = c.o > 0.5;
+        if (on !== c.on) { c.on = on; c.el.style.visibility = on ? '' : 'hidden'; }
+      });
+      requestAnimationFrame(loop);
+    }
+    loop();
+  })();
   // Фирменный ход «тетрадь, которую листаешь» живёт в CSS: каждый лист считает --f от --v-p акта
   // (переменная наследуется с секции) и поворачивается rotateY вокруг корешка. JS не нужен.
 </script>
